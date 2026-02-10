@@ -10,13 +10,13 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-zinc-900 text-white hover:bg-zinc-800 focus-visible:ring-zinc-900",
+          "bg-[var(--accent)] text-white hover:brightness-110 focus-visible:ring-[var(--accent)]",
         secondary:
-          "bg-zinc-100 text-zinc-900 hover:bg-zinc-200 focus-visible:ring-zinc-400",
+          "bg-[var(--accent-2)] text-[var(--accent-3)] hover:brightness-105 focus-visible:ring-[var(--accent-2)]",
         outline:
-          "border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-900 focus-visible:ring-zinc-400",
+          "border border-[var(--border-strong)] bg-[var(--panel)] text-[var(--foreground)] hover:border-[var(--accent-2)] hover:bg-[var(--panel-2)] focus-visible:ring-[var(--accent)]",
         ghost:
-          "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:ring-zinc-400",
+          "text-[var(--foreground)] hover:bg-[var(--panel-2)] focus-visible:ring-[var(--accent)]",
         destructive:
           "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500",
       },

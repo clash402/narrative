@@ -521,8 +521,8 @@ export function CampaignWorkspace({ data }: WorkspaceProps) {
                         onClick={() => setSelectedDay(day.dayNumber)}
                         className={`rounded-lg border p-2 text-left transition ${
                           isActive
-                            ? "border-zinc-900 bg-zinc-900 text-white"
-                            : "border-border bg-panel-2 hover:border-zinc-400"
+                            ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                            : "border-border bg-panel-2 hover:border-[var(--accent-2)]"
                         }`}
                       >
                         <p className="text-xs font-semibold tracking-wide uppercase">
@@ -536,7 +536,9 @@ export function CampaignWorkspace({ data }: WorkspaceProps) {
                                 ? "success"
                                 : "secondary"
                             }
-                            className={isActive ? "bg-white text-zinc-900" : ""}
+                            className={
+                              isActive ? "bg-white text-[var(--accent)]" : ""
+                            }
                           >
                             O:{day.status === "APPROVED" ? "A" : "D"}
                           </Badge>

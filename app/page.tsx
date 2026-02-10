@@ -50,11 +50,7 @@ export default async function DashboardPage() {
                 narrative arc.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Button asChild>
-                <Link href="/campaigns/new">Create Campaign</Link>
-              </Button>
-            </CardContent>
+            <CardContent />
           </Card>
         ) : (
           campaigns.map((campaign) => {

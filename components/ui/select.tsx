@@ -32,7 +32,7 @@ function SelectTrigger({
   return (
     <SelectPrimitive.Trigger
       className={cn(
-        "flex h-10 w-full items-center justify-between rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm placeholder:text-zinc-500 focus:ring-2 focus:ring-zinc-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+        "placeholder:text-muted flex h-10 w-full items-center justify-between rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--accent-2)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}
@@ -54,7 +54,7 @@ function SelectContent({
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
         className={cn(
-          "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-zinc-200 bg-white text-zinc-900 shadow-md",
+          "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--panel)] text-[var(--foreground)] shadow-md",
           className,
         )}
         {...props}
@@ -93,7 +93,7 @@ function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        "relative flex w-full cursor-default items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-900",
+        "relative flex w-full cursor-default items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-[var(--panel-2)]",
         className,
       )}
       {...props}
@@ -114,7 +114,7 @@ function SelectSeparator({
 }: React.ComponentProps<typeof SelectPrimitive.Separator>) {
   return (
     <SelectPrimitive.Separator
-      className={cn("my-1 h-px bg-zinc-200", className)}
+      className={cn("my-1 h-px bg-[var(--border)]", className)}
       {...props}
     />
   );
