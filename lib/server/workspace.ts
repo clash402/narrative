@@ -14,7 +14,13 @@ async function getTemplates() {
     orderBy: { createdAt: "asc" },
   });
   return templates.map((template) => ({
-    ...template,
+    id: template.id,
+    slug: template.slug,
+    name: template.name,
+    description: template.description,
+    act1Intent: template.act1Intent,
+    act2Intent: template.act2Intent,
+    act3Intent: template.act3Intent,
     formatRotation: Array.isArray(template.formatRotation)
       ? (template.formatRotation as string[])
       : [],

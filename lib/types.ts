@@ -24,8 +24,8 @@ export type CampaignData = {
   forbidden: string[];
   ctaPreference: string | null;
   isOutlineLocked: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type DayOutlineData = {
@@ -41,8 +41,8 @@ export type DayOutlineData = {
   constraints: string | null;
   status: DayStatus;
   versionNumber: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type DayPostData = {
@@ -53,8 +53,8 @@ export type DayPostData = {
   altHooks: string[];
   status: DayStatus;
   versionNumber: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type DayOutlineVersionData = {
@@ -64,7 +64,7 @@ export type DayOutlineVersionData = {
   versionNumber: number;
   source: string;
   snapshot: Record<string, unknown>;
-  createdAt: Date;
+  createdAt: string;
 };
 
 export type DayPostVersionData = {
@@ -74,7 +74,7 @@ export type DayPostVersionData = {
   versionNumber: number;
   source: string;
   snapshot: Record<string, unknown>;
-  createdAt: Date;
+  createdAt: string;
 };
 
 export type WorkspaceData = {

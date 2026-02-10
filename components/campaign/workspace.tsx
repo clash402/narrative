@@ -253,7 +253,7 @@ export function CampaignWorkspace({ data }: WorkspaceProps) {
             </Badge>
             <Button
               variant="secondary"
-              disabled={isPending}
+              disabled={isPending || data.campaign.isOutlineLocked}
               onClick={() =>
                 runAction(
                   () => generateOutlineAll({ campaignId: data.campaign.id }),
@@ -267,6 +267,22 @@ export function CampaignWorkspace({ data }: WorkspaceProps) {
                 ? "Generating..."
                 : "Generate Outline"}
             </Button>
+            <Button
+              variant="outline"
+              disabled={isPending || data.campaign.isOutlineLocked}
+              onClick={() =>
+                runAction(
+                  () => generateOutlineAll({ campaignId: data.campaign.id }),
+                  "30-day outline regenerated.",
+                  "generateOutlineAll",
+                )
+              }
+            >
+              <RefreshCcw className="h-4 w-4" />
+              {pendingAction === "generateOutlineAll"
+                ? "Regenerating..."
+                : "Regenerate All"}
+            </Button>
             <Select value={selectedAct} onValueChange={setSelectedAct}>
               <SelectTrigger className="w-[130px]">
                 <SelectValue placeholder="Act" />
@@ -279,7 +295,7 @@ export function CampaignWorkspace({ data }: WorkspaceProps) {
             </Select>
             <Button
               variant="outline"
-              disabled={isPending}
+              disabled={isPending || data.campaign.isOutlineLocked}
               onClick={() =>
                 runAction(
                   () =>

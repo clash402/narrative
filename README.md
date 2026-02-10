@@ -1,36 +1,125 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 30-Day LinkedIn Campaign Builder
 
-## Getting Started
+Production-quality MVP for building, locking, and generating a 30-day LinkedIn campaign in a structured workflow.
 
-First, run the development server:
+## Stack
+
+- Next.js (App Router) + TypeScript
+- TailwindCSS + shadcn/ui-style component primitives
+- Prisma + SQLite (structured for Postgres migration later)
+- Server Actions for mutations
+- Zod-based AI output parsing + validation
+
+## Core Workflow
+
+1. Create a campaign from a template arc and campaign bible guardrails.
+2. Generate a 30-day outline (`3 acts x 10 days`).
+3. Approve/regenerate/edit day outlines.
+4. Lock outline to prevent drift.
+5. Generate all posts or regenerate per-day posts.
+6. Approve/edit posts and export the full campaign.
+
+## Routes
+
+- `/` dashboard
+- `/brand` brand profile
+- `/campaigns/new` campaign wizard
+- `/campaigns/[id]` campaign workspace (grid + detail editor)
+
+## Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Configure env:
+
+```bash
+cp .env.example .env
+```
+
+3. Initialize DB and seed templates:
+
+```bash
+npm run db:generate
+npx prisma db push
+npm run db:seed
+```
+
+4. Run app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Scripts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `npm run dev`
+- `npm run lint`
+- `npm run format`
+- `npm run format:check`
+- `npm run db:generate`
+- `npm run db:migrate`
+- `npm run db:seed`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Environment Variables
 
-## Learn More
+```env
+DATABASE_URL="file:./dev.db"
 
-To learn more about Next.js, take a look at the following resources:
+AI_PROVIDER="openai" # openai | anthropic | google
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+OPENAI_API_KEY=""
+OPENAI_SMALL_MODEL="gpt-4.1-mini"
+OPENAI_LARGE_MODEL="gpt-4.1"
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+ANTHROPIC_API_KEY=""
+ANTHROPIC_SMALL_MODEL="claude-3-5-haiku-latest"
+ANTHROPIC_LARGE_MODEL="claude-3-7-sonnet-latest"
 
-## Deploy on Vercel
+GOOGLE_API_KEY=""
+GOOGLE_SMALL_MODEL="gemini-2.0-flash"
+GOOGLE_LARGE_MODEL="gemini-1.5-pro"
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+ROUTER_MAX_RETRIES="2"
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Model Router Behavior
+
+Location: `lib/ai/router.ts`
+
+- Routes by `taskType`:
+  - `OUTLINE_ALL`, `POST_ALL`: prefer large model
+  - `OUTLINE_ACT`, `OUTLINE_DAY`, `POST_DAY`: start with small model
+- Validation-first generation:
+  - Parse strict JSON with Zod
+  - Apply task-specific business rules (30 days, 10-day acts, key fields, post constraints)
+- Retry/escalation strategy:
+  - Small-model tasks: small -> small fix retry -> large fallback
+  - Large-model tasks: large -> large fix retries
+
+## AI Provider Architecture
+
+- Provider interface: `lib/ai/types.ts` (`AIProvider`)
+- Router + validation: `lib/ai/router.ts`, `lib/ai/validation.ts`
+- Prompt templates: `lib/ai/prompts.ts`
+- Providers:
+  - `lib/ai/providers/openai.ts` (working)
+  - `lib/ai/providers/anthropic.ts` (stub)
+  - `lib/ai/providers/google.ts` (stub)
+
+### How to Add a New Provider
+
+1. Implement `AIProvider` in `lib/ai/providers/<provider>.ts`.
+2. Add env vars for small/large model names + API key.
+3. Register provider selection in `lib/ai/providers/index.ts`.
+4. Keep output contract unchanged (JSON only), so existing router validation continues to work.
+
+## Notes
+
+- No auth in MVP (single-user local flow).
+- Locking is enforced before post generation.
+- Unlocking with existing posts prompts drift confirmation.
+- Version history is tracked for outline and post edits/regenerations/restores.

@@ -4,10 +4,15 @@ import { DayStatus, Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { runTask } from "@/lib/ai/router";
+import type {
+  CampaignBible,
+  OutlineDayInput,
+  PostDayInput,
+} from "@/lib/ai/types";
 import {
   createOutlineSkeleton,
   normalizeStringList,
-  toActNumber,
 } from "@/lib/server/campaign";
 import { db } from "@/lib/server/db";
 import {
@@ -91,26 +96,164 @@ const updateBibleSchema = z.object({
   ctaPreference: z.string().optional(),
 });
 
-function buildDraftPostText(params: {
+function asStringArray(input: Prisma.JsonValue): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.filter((item): item is string => typeof item === "string");
+}
+
+function toCampaignBible(campaign: {
+  voiceStyle: string;
+  audience: string;
+  goal: string;
+  pillars: Prisma.JsonValue;
+  forbidden: Prisma.JsonValue;
+  ctaPreference: string | null;
+}): CampaignBible {
+  return {
+    voiceStyle: campaign.voiceStyle,
+    audience: campaign.audience,
+    goal: campaign.goal,
+    pillars: asStringArray(campaign.pillars),
+    forbidden: asStringArray(campaign.forbidden),
+    ctaPreference: campaign.ctaPreference,
+  };
+}
+
+function toOutlineInput(day: {
+  dayNumber: number;
+  actNumber: number;
   title: string;
   hook: string;
-  keyPoints: string[];
+  format: string;
+  keyPoints: Prisma.JsonValue;
   cta: string;
-  theme: string;
-}): string {
-  const lines = [
-    params.hook,
-    "",
-    `Today in the campaign: ${params.title}`,
-    "",
-    ...params.keyPoints.map((point, index) => `${index + 1}) ${point}`),
-    "",
-    `Theme tie-in: ${params.theme}.`,
-    "",
-    params.cta,
-  ];
+  constraints: string | null;
+}): OutlineDayInput {
+  return {
+    dayNumber: day.dayNumber,
+    actNumber: day.actNumber,
+    title: day.title,
+    hook: day.hook,
+    format: day.format,
+    keyPoints: asStringArray(day.keyPoints),
+    cta: day.cta,
+    constraints: day.constraints,
+  };
+}
 
-  return lines.join("\n").slice(0, 2200);
+async function applyGeneratedOutlines(params: {
+  campaignId: string;
+  generatedDays: OutlineDayInput[];
+  source: string;
+}) {
+  const existing = await db.dayOutline.findMany({
+    where: { campaignId: params.campaignId },
+  });
+
+  const existingByDay = new Map(
+    existing.map((entry) => [entry.dayNumber, entry]),
+  );
+
+  await db.$transaction(async (tx) => {
+    for (const generatedDay of params.generatedDays) {
+      const current = existingByDay.get(generatedDay.dayNumber);
+      if (current) {
+        await tx.dayOutlineVersion.create({
+          data: {
+            campaignId: current.campaignId,
+            dayOutlineId: current.id,
+            versionNumber: current.versionNumber,
+            source: params.source,
+            snapshot: {
+              dayNumber: current.dayNumber,
+              actNumber: current.actNumber,
+              title: current.title,
+              hook: current.hook,
+              format: current.format,
+              keyPoints: current.keyPoints,
+              cta: current.cta,
+              constraints: current.constraints,
+              status: current.status,
+            },
+          },
+        });
+
+        await tx.dayOutline.update({
+          where: { id: current.id },
+          data: {
+            actNumber: generatedDay.actNumber,
+            title: generatedDay.title,
+            hook: generatedDay.hook,
+            format: generatedDay.format,
+            keyPoints: generatedDay.keyPoints,
+            cta: generatedDay.cta,
+            constraints: generatedDay.constraints || null,
+            status: DayStatus.DRAFT,
+            versionNumber: { increment: 1 },
+          },
+        });
+      } else {
+        await tx.dayOutline.create({
+          data: {
+            campaignId: params.campaignId,
+            dayNumber: generatedDay.dayNumber,
+            actNumber: generatedDay.actNumber,
+            title: generatedDay.title,
+            hook: generatedDay.hook,
+            format: generatedDay.format,
+            keyPoints: generatedDay.keyPoints,
+            cta: generatedDay.cta,
+            constraints: generatedDay.constraints || null,
+          },
+        });
+      }
+    }
+  });
+}
+
+async function upsertGeneratedPost(params: {
+  campaignId: string;
+  dayNumber: number;
+  post: { text: string; altHooks: string[] };
+  source: string;
+}) {
+  const existing = await db.dayPost.findUnique({
+    where: {
+      campaignId_dayNumber: {
+        campaignId: params.campaignId,
+        dayNumber: params.dayNumber,
+      },
+    },
+  });
+
+  if (existing) {
+    await createPostVersion(existing, params.source);
+
+    await db.dayPost.update({
+      where: { id: existing.id },
+      data: {
+        text: params.post.text,
+        altHooks: params.post.altHooks,
+        status: DayStatus.DRAFT,
+        versionNumber: { increment: 1 },
+      },
+    });
+
+    return;
+  }
+
+  await db.dayPost.create({
+    data: {
+      campaignId: params.campaignId,
+      dayNumber: params.dayNumber,
+      text: params.post.text,
+      altHooks: params.post.altHooks,
+      status: DayStatus.DRAFT,
+    },
+  });
 }
 
 async function createCampaign(input: z.infer<typeof createCampaignSchema>) {
@@ -209,60 +352,42 @@ async function updateCampaignBible(input: z.infer<typeof updateBibleSchema>) {
 
 async function generateOutlineAll(input: z.infer<typeof idSchema>) {
   const parsed = idSchema.parse(input);
+
   const campaign = await db.campaign.findUnique({
     where: { id: parsed.campaignId },
-    include: { template: true, dayOutlines: true },
+    include: {
+      template: true,
+      dayOutlines: { orderBy: { dayNumber: "asc" } },
+    },
   });
 
   if (!campaign) {
     throw new Error("Campaign not found.");
   }
 
-  const outline = createOutlineSkeleton(campaign.template, campaign.theme);
+  if (campaign.isOutlineLocked) {
+    throw new Error("Unlock campaign before regenerating the outline.");
+  }
 
-  await db.$transaction(async (tx) => {
-    for (const item of outline) {
-      const existing = campaign.dayOutlines.find(
-        (entry) => entry.dayNumber === item.dayNumber,
-      );
+  const generated = await runTask<{ days: OutlineDayInput[] }>("OUTLINE_ALL", {
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    theme: campaign.theme,
+    bible: toCampaignBible(campaign),
+    template: {
+      name: campaign.template.name,
+      act1Intent: campaign.template.act1Intent,
+      act2Intent: campaign.template.act2Intent,
+      act3Intent: campaign.template.act3Intent,
+      formatRotation: campaign.template.formatRotation,
+    },
+    dayOutlines: campaign.dayOutlines.map(toOutlineInput),
+  });
 
-      if (existing) {
-        await tx.dayOutlineVersion.create({
-          data: {
-            campaignId: existing.campaignId,
-            dayOutlineId: existing.id,
-            versionNumber: existing.versionNumber,
-            source: "generate_outline_all",
-            snapshot: {
-              dayNumber: existing.dayNumber,
-              actNumber: existing.actNumber,
-              title: existing.title,
-              hook: existing.hook,
-              format: existing.format,
-              keyPoints: existing.keyPoints,
-              cta: existing.cta,
-              constraints: existing.constraints,
-              status: existing.status,
-            },
-          },
-        });
-
-        await tx.dayOutline.update({
-          where: { id: existing.id },
-          data: {
-            actNumber: item.actNumber,
-            title: item.title,
-            hook: item.hook,
-            format: item.format,
-            keyPoints: item.keyPoints,
-            cta: item.cta,
-            constraints: item.constraints,
-            status: DayStatus.DRAFT,
-            versionNumber: { increment: 1 },
-          },
-        });
-      }
-    }
+  await applyGeneratedOutlines({
+    campaignId: campaign.id,
+    generatedDays: generated.data.days,
+    source: `generate_outline_all:${generated.meta.model}`,
   });
 
   revalidatePath(`/campaigns/${parsed.campaignId}`);
@@ -272,59 +397,40 @@ async function generateOutlineAct(input: z.infer<typeof regenerateActSchema>) {
   const parsed = regenerateActSchema.parse(input);
   const campaign = await db.campaign.findUnique({
     where: { id: parsed.campaignId },
-    include: { template: true, dayOutlines: true },
+    include: {
+      template: true,
+      dayOutlines: { orderBy: { dayNumber: "asc" } },
+    },
   });
 
   if (!campaign) {
     throw new Error("Campaign not found.");
   }
 
-  const full = createOutlineSkeleton(campaign.template, campaign.theme);
-  const subset = full.filter((entry) => entry.actNumber === parsed.actNumber);
+  if (campaign.isOutlineLocked) {
+    throw new Error("Unlock campaign before regenerating an act.");
+  }
 
-  await db.$transaction(async (tx) => {
-    for (const item of subset) {
-      const existing = campaign.dayOutlines.find(
-        (entry) => entry.dayNumber === item.dayNumber,
-      );
-      if (!existing) {
-        continue;
-      }
+  const generated = await runTask<{ days: OutlineDayInput[] }>("OUTLINE_ACT", {
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    theme: campaign.theme,
+    bible: toCampaignBible(campaign),
+    template: {
+      name: campaign.template.name,
+      act1Intent: campaign.template.act1Intent,
+      act2Intent: campaign.template.act2Intent,
+      act3Intent: campaign.template.act3Intent,
+      formatRotation: campaign.template.formatRotation,
+    },
+    dayOutlines: campaign.dayOutlines.map(toOutlineInput),
+    targetAct: parsed.actNumber,
+  });
 
-      await tx.dayOutlineVersion.create({
-        data: {
-          campaignId: existing.campaignId,
-          dayOutlineId: existing.id,
-          versionNumber: existing.versionNumber,
-          source: `regenerate_act_${parsed.actNumber}`,
-          snapshot: {
-            dayNumber: existing.dayNumber,
-            actNumber: existing.actNumber,
-            title: existing.title,
-            hook: existing.hook,
-            format: existing.format,
-            keyPoints: existing.keyPoints,
-            cta: existing.cta,
-            constraints: existing.constraints,
-            status: existing.status,
-          },
-        },
-      });
-
-      await tx.dayOutline.update({
-        where: { id: existing.id },
-        data: {
-          title: item.title,
-          hook: item.hook,
-          format: item.format,
-          keyPoints: item.keyPoints,
-          cta: item.cta,
-          constraints: item.constraints,
-          status: DayStatus.DRAFT,
-          versionNumber: { increment: 1 },
-        },
-      });
-    }
+  await applyGeneratedOutlines({
+    campaignId: campaign.id,
+    generatedDays: generated.data.days,
+    source: `regenerate_act_${parsed.actNumber}:${generated.meta.model}`,
   });
 
   revalidatePath(`/campaigns/${parsed.campaignId}`);
@@ -335,44 +441,40 @@ async function generateOutlineDay(input: z.infer<typeof regenerateDaySchema>) {
 
   const campaign = await db.campaign.findUnique({
     where: { id: parsed.campaignId },
-    include: { template: true, dayOutlines: true },
+    include: {
+      template: true,
+      dayOutlines: { orderBy: { dayNumber: "asc" } },
+    },
   });
 
   if (!campaign) {
     throw new Error("Campaign not found.");
   }
 
-  const outline = campaign.dayOutlines.find(
-    (entry) => entry.dayNumber === parsed.dayNumber,
-  );
-  if (!outline) {
-    throw new Error("Outline day not found.");
+  if (campaign.isOutlineLocked) {
+    throw new Error("Unlock campaign before regenerating a day.");
   }
 
-  await createOutlineVersion(outline, "regenerate_outline_day");
-
-  const actNumber = toActNumber(parsed.dayNumber);
-  const formats = Array.isArray(campaign.template.formatRotation)
-    ? (campaign.template.formatRotation as string[])
-    : ["story"];
-  const format = formats[(parsed.dayNumber - 1) % formats.length] ?? "story";
-
-  await db.dayOutline.update({
-    where: { id: outline.id },
-    data: {
-      actNumber,
-      title: `Day ${parsed.dayNumber}: ${campaign.theme}`,
-      hook: `A high-signal ${format} post for Act ${actNumber}.`,
-      format,
-      keyPoints: [
-        `Day ${parsed.dayNumber} insight`,
-        `Tie the message to ${campaign.goal}`,
-        "End with practical next step",
-      ],
-      cta: campaign.ctaPreference || "Invite comments from peers.",
-      status: DayStatus.DRAFT,
-      versionNumber: { increment: 1 },
+  const generated = await runTask<{ days: OutlineDayInput[] }>("OUTLINE_DAY", {
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    theme: campaign.theme,
+    bible: toCampaignBible(campaign),
+    template: {
+      name: campaign.template.name,
+      act1Intent: campaign.template.act1Intent,
+      act2Intent: campaign.template.act2Intent,
+      act3Intent: campaign.template.act3Intent,
+      formatRotation: campaign.template.formatRotation,
     },
+    dayOutlines: campaign.dayOutlines.map(toOutlineInput),
+    targetDay: parsed.dayNumber,
+  });
+
+  await applyGeneratedOutlines({
+    campaignId: campaign.id,
+    generatedDays: generated.data.days,
+    source: `regenerate_outline_day:${generated.meta.model}`,
   });
 
   revalidatePath(`/campaigns/${parsed.campaignId}`);
@@ -489,7 +591,7 @@ async function generatePostDay(input: z.infer<typeof regenerateDaySchema>) {
   const campaign = await db.campaign.findUnique({
     where: { id: parsed.campaignId },
     include: {
-      dayOutlines: true,
+      dayOutlines: { orderBy: { dayNumber: "asc" } },
     },
   });
 
@@ -501,60 +603,27 @@ async function generatePostDay(input: z.infer<typeof regenerateDaySchema>) {
     throw new Error("Lock the outline before generating posts.");
   }
 
-  const outline = campaign.dayOutlines.find(
-    (entry) => entry.dayNumber === parsed.dayNumber,
-  );
-  if (!outline) {
-    throw new Error("Outline not found for day.");
-  }
-
-  const text = buildDraftPostText({
-    title: outline.title,
-    hook: outline.hook,
-    keyPoints: (outline.keyPoints as string[]) || [],
-    cta: outline.cta,
-    theme: campaign.theme,
-  });
-
-  const existing = await db.dayPost.findUnique({
-    where: {
-      campaignId_dayNumber: {
-        campaignId: parsed.campaignId,
-        dayNumber: parsed.dayNumber,
-      },
+  const generated = await runTask<{ text: string; altHooks: string[] }>(
+    "POST_DAY",
+    {
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      theme: campaign.theme,
+      bible: toCampaignBible(campaign),
+      dayOutlines: campaign.dayOutlines.map(toOutlineInput),
+      targetDay: parsed.dayNumber,
     },
+  );
+
+  await upsertGeneratedPost({
+    campaignId: campaign.id,
+    dayNumber: parsed.dayNumber,
+    post: {
+      text: generated.data.text,
+      altHooks: generated.data.altHooks.slice(0, 3),
+    },
+    source: `regenerate_post_day:${generated.meta.model}`,
   });
-
-  if (existing) {
-    await createPostVersion(existing, "regenerate_post_day");
-
-    await db.dayPost.update({
-      where: { id: existing.id },
-      data: {
-        text,
-        altHooks: [
-          outline.hook,
-          `What most people miss about ${outline.title}`,
-          `A field note on ${outline.title}`,
-        ],
-        status: DayStatus.DRAFT,
-        versionNumber: { increment: 1 },
-      },
-    });
-  } else {
-    await db.dayPost.create({
-      data: {
-        campaignId: parsed.campaignId,
-        dayNumber: parsed.dayNumber,
-        text,
-        altHooks: [
-          outline.hook,
-          `What most people miss about ${outline.title}`,
-          `A field note on ${outline.title}`,
-        ],
-      },
-    });
-  }
 
   revalidatePath(`/campaigns/${parsed.campaignId}`);
 }
@@ -578,62 +647,25 @@ async function generatePostsAll(input: z.infer<typeof idSchema>) {
     throw new Error("Lock the outline before generating posts.");
   }
 
-  await db.$transaction(async (tx) => {
-    for (const outline of campaign.dayOutlines) {
-      const existingPost = campaign.dayPosts.find(
-        (post) => post.dayNumber === outline.dayNumber,
-      );
-      const text = buildDraftPostText({
-        title: outline.title,
-        hook: outline.hook,
-        keyPoints: (outline.keyPoints as string[]) || [],
-        cta: outline.cta,
-        theme: campaign.theme,
-      });
-
-      const altHooks = [
-        outline.hook,
-        `Three lessons from ${outline.title}`,
-        `A contrarian take on ${outline.title}`,
-      ];
-
-      if (existingPost) {
-        await tx.dayPostVersion.create({
-          data: {
-            campaignId: existingPost.campaignId,
-            dayPostId: existingPost.id,
-            versionNumber: existingPost.versionNumber,
-            source: "generate_posts_all",
-            snapshot: {
-              dayNumber: existingPost.dayNumber,
-              text: existingPost.text,
-              altHooks: existingPost.altHooks,
-              status: existingPost.status,
-            },
-          },
-        });
-
-        await tx.dayPost.update({
-          where: { id: existingPost.id },
-          data: {
-            text,
-            altHooks,
-            status: DayStatus.DRAFT,
-            versionNumber: { increment: 1 },
-          },
-        });
-      } else {
-        await tx.dayPost.create({
-          data: {
-            campaignId: campaign.id,
-            dayNumber: outline.dayNumber,
-            text,
-            altHooks,
-          },
-        });
-      }
-    }
+  const generated = await runTask<{ posts: PostDayInput[] }>("POST_ALL", {
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    theme: campaign.theme,
+    bible: toCampaignBible(campaign),
+    dayOutlines: campaign.dayOutlines.map(toOutlineInput),
   });
+
+  for (const post of generated.data.posts) {
+    await upsertGeneratedPost({
+      campaignId: campaign.id,
+      dayNumber: post.dayNumber,
+      post: {
+        text: post.text,
+        altHooks: post.altHooks.slice(0, 3),
+      },
+      source: `generate_posts_all:${generated.meta.model}`,
+    });
+  }
 
   revalidatePath(`/campaigns/${parsed.campaignId}`);
 }
@@ -705,8 +737,8 @@ async function restoreVersion(input: z.infer<typeof restoreVersionSchema>) {
         hook: String(snapshot.hook || outline.hook),
         format: String(snapshot.format || outline.format),
         keyPoints: Array.isArray(snapshot.keyPoints)
-          ? snapshot.keyPoints
-          : outline.keyPoints,
+          ? asStringArray(snapshot.keyPoints as Prisma.JsonValue)
+          : asStringArray(outline.keyPoints),
         cta: String(snapshot.cta || outline.cta),
         constraints: snapshot.constraints ? String(snapshot.constraints) : null,
         status:
@@ -744,8 +776,8 @@ async function restoreVersion(input: z.infer<typeof restoreVersionSchema>) {
     data: {
       text: String(snapshot.text || post.text),
       altHooks: Array.isArray(snapshot.altHooks)
-        ? snapshot.altHooks
-        : post.altHooks,
+        ? asStringArray(snapshot.altHooks as Prisma.JsonValue)
+        : asStringArray(post.altHooks),
       status:
         snapshot.status === DayStatus.APPROVED
           ? DayStatus.APPROVED
