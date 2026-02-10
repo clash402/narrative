@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum DayStatus {
+  DRAFT
+  APPROVED
+}
+
+model BrandProfile {
+  id           String   @id @default(cuid())
+  companyName  String
+  description  String?
+  website      String?
+  primaryOffer String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model CampaignTemplate {
+  id             String     @id @default(cuid())
+  slug           String     @unique
+  name           String
+  description    String
+  act1Intent     String
+  act2Intent     String
+  act3Intent     String
+  formatRotation Json
+  campaigns      Campaign[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+model Campaign {
+  id              String             @id @default(cuid())
+  name            String
+  theme           String
+  templateId      String
+  template        CampaignTemplate   @relation(fields: [templateId], references: [id])
+  voiceStyle      String
+  audience        String
+  goal            String
+  pillars         Json
+  forbidden       Json
+  ctaPreference   String?
+  isOutlineLocked Boolean            @default(false)
+  userId          String?
+  dayOutlines     DayOutline[]
+  dayPosts        DayPost[]
+  outlineVersions DayOutlineVersion[]
+  postVersions    DayPostVersion[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model DayOutline {
+  id            String            @id @default(cuid())
+  campaignId    String
+  campaign      Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  dayNumber     Int
+  actNumber     Int
+  title         String
+  hook          String
+  format        String
+  keyPoints     Json
+  cta           String
+  constraints   String?
+  status        DayStatus         @default(DRAFT)
+  versionNumber Int               @default(1)
+  versions      DayOutlineVersion[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([campaignId, dayNumber])
+}
+
+model DayOutlineVersion {
+  id          String     @id @default(cuid())
+  campaignId  String
+  campaign    Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  dayOutlineId String
+  dayOutline   DayOutline @relation(fields: [dayOutlineId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  source       String
+  snapshot     Json
+  createdAt    DateTime   @default(now())
+
+  @@index([campaignId, dayOutlineId])
+}
+
+model DayPost {
+  id            String           @id @default(cuid())
+  campaignId    String
+  campaign      Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  dayNumber     Int
+  text          String
+  altHooks      Json
+  status        DayStatus        @default(DRAFT)
+  versionNumber Int              @default(1)
+  versions      DayPostVersion[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([campaignId, dayNumber])
+}
+
+model DayPostVersion {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  dayPostId    String
+  dayPost      DayPost  @relation(fields: [dayPostId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  source       String
+  snapshot     Json
+  createdAt    DateTime @default(now())
+
+  @@index([campaignId, dayPostId])
+}
